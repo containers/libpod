@@ -147,6 +147,8 @@ func AutoUpdate(ctx context.Context, runtime *libpod.Runtime, options Options) (
 	}
 	defer conn.Close()
 
+	report := &entities.AutoUpdateReport{}
+
 	// Update images.
 	containersToRestart := []*libpod.Container{}
 	updatedRawImages := make(map[string]bool)
@@ -156,6 +158,13 @@ func AutoUpdate(ctx context.Context, runtime *libpod.Runtime, options Options) (
 			errs = append(errs, errors.Errorf("container image ID %q not found in local storage", imageID))
 			return nil, errs
 		}
+
+		autoUpdateImage := entities.AutoUpdateImage{
+			ID:     image.ID(),
+			Digest: image.Digest().String(),
+			Names:  image.Names(),
+		}
+
 		// Now we have to check if the image of any containers must be updated.
 		// Note that the image ID is NOT enough for this check as a given image
 		// may have multiple tags.
@@ -165,6 +174,7 @@ func AutoUpdate(ctx context.Context, runtime *libpod.Runtime, options Options) (
 			if rawImageName == "" {
 				errs = append(errs, errors.Errorf("error registry auto-updating container %q: raw-image name is empty", cid))
 			}
+
 			authfile := getAuthfilePath(registryCtr, options)
 			needsUpdate, err := newerRemoteImageAvailable(ctx, runtime, image, rawImageName, authfile)
 			if err != nil {
@@ -183,6 +193,16 @@ func AutoUpdate(ctx context.Context, runtime *libpod.Runtime, options Options) (
 					updatedRawImages[rawImageName] = true
 				}
 				containersToRestart = append(containersToRestart, registryCtr)
+
+				newImage, _, err := runtime.LibimageRuntime().LookupImage(rawImageName, nil)
+				if err != nil {
+					errs = append(errs, errors.Wrap(err, "error looking up updated image in local storage"))
+					continue
+				}
+				autoUpdateImage.NewDigest = newImage.Digest().String()
+				autoUpdateImage.NewID = newImage.ID()
+				autoUpdateImage.Updated = true
+				autoUpdateImage.Names = newImage.Names()
 			}
 		}
 
@@ -202,13 +222,31 @@ func AutoUpdate(ctx context.Context, runtime *libpod.Runtime, options Options) (
 			if needsUpdate {
 				logrus.Infof("Auto-updating container %q using local image %q", cid, rawImageName)
 				containersToRestart = append(containersToRestart, localCtr)
+
+				newImage, _, err := runtime.LibimageRuntime().LookupImage(rawImageName, nil)
+				if err != nil {
+					errs = append(errs, errors.Wrap(err, "error looking up updated image in local storage"))
+					continue
+				}
+				autoUpdateImage.Digest = newImage.Digest().String()
+				autoUpdateImage.NewID = newImage.ID()
+				autoUpdateImage.Updated = true
+				autoUpdateImage.Names = newImage.Names()
 			}
 		}
+
+		report.Images = append(report.Images, autoUpdateImage)
 	}
 
 	// Restart containers.
-	updatedUnits := []string{}
 	for _, ctr := range containersToRestart {
+		autoUpdateContainer := entities.AutoUpdateContainer{
+			ID:      ctr.ID(),
+			Name:    ctr.Name(),
+			Image:   ctr.RawImageName(),
+			Updated: true,
+		}
+
 		labels := ctr.Labels()
 		unit, exists := labels[systemdDefine.EnvVariable]
 		if !exists {
@@ -216,16 +254,19 @@ func AutoUpdate(ctx context.Context, runtime *libpod.Runtime, options Options) (
 			errs = append(errs, errors.Errorf("error auto-updating container %q: no %s label found", ctr.ID(), systemdDefine.EnvVariable))
 			continue
 		}
+
+		autoUpdateContainer.SystemdUnit = unit
 		_, err := conn.RestartUnit(unit, "replace", nil)
 		if err != nil {
 			errs = append(errs, errors.Wrapf(err, "error auto-updating container %q: restarting systemd unit %q failed", ctr.ID(), unit))
 			continue
 		}
 		logrus.Infof("Successfully restarted systemd unit %q", unit)
-		updatedUnits = append(updatedUnits, unit)
+		report.Units = append(report.Units, unit)
+		report.Containers = append(report.Containers, autoUpdateContainer)
 	}
 
-	return &entities.AutoUpdateReport{Units: updatedUnits}, errs
+	return report, errs
 }
 
 // imageContainersMap generates a map[image ID] -> [containers using the image]

@@ -53,7 +53,7 @@ bc219740a210455fa27deacc96d50a9e20516492f1417507c13ce1533dbdcd9d
 
 ### Generate a systemd unit for this container
 $ podman generate systemd --new --files bc219740a210455fa27deacc96d50a9e20516492f1417507c13ce1533dbdcd9d
-/home/user/containers/libpod/container-bc219740a210455fa27deacc96d50a9e20516492f1417507c13ce1533dbdcd9d.service
+/home/user/container-bc219740a210455fa27deacc96d50a9e20516492f1417507c13ce1533dbdcd9d.service
 
 ### Load the new systemd unit and start it
 $ mv ./container-bc219740a210455fa27deacc96d50a9e20516492f1417507c13ce1533dbdcd9d.service ~/.config/systemd/user
@@ -67,7 +67,7 @@ $ systemctl --user start container-bc219740a210455fa27deacc96d50a9e20516492f1417
 
 ### Auto-update the container
 $ podman auto-update
-container-bc219740a210455fa27deacc96d50a9e20516492f1417507c13ce1533dbdcd9d.service
+[...]
 ```
 
 Autoupdate with local policy
@@ -80,7 +80,7 @@ be0889fd06f252a2e5141b37072c6bada68563026cb2b2649f53394d87ccc338
 
 ### Generate a systemd unit for this container
 $ podman generate systemd --new --files be0889fd06f252a2e5141b37072c6bada68563026cb2b2649f53394d87ccc338
-/home/user/containers/libpod/container-be0889fd06f252a2e5141b37072c6bada68563026cb2b2649f53394d87ccc338.service
+/home/user/container-be0889fd06f252a2e5141b37072c6bada68563026cb2b2649f53394d87ccc338.service
 
 ### Load the new systemd unit and start it
 $ mv ./container-be0889fd06f252a2e5141b37072c6bada68563026cb2b2649f53394d87ccc338.service ~/.config/systemd/user
@@ -102,7 +102,7 @@ $ podman commit --change CMD=/bin/bash inspiring_galileo busybox:latest
 
 ### Auto-update the container
 $ podman auto-update
-container-be0889fd06f252a2e5141b37072c6bada68563026cb2b2649f53394d87ccc338.service
+[...]
 ```
 
 ## SEE ALSO

@@ -47,7 +47,7 @@ func (ir *ImageEngine) ManifestCreate(ctx context.Context, names []string, image
 
 // ManifestExists checks if a manifest list with the given name exists in local storage
 func (ir *ImageEngine) ManifestExists(ctx context.Context, name string) (*entities.BoolReport, error) {
-	image, _, err := ir.Libpod.LibimageRuntime().LookupImage(name, &libimage.LookupImageOptions{IgnorePlatform: true})
+	image, _, err := ir.Libpod.LibimageRuntime().LookupImage(name, nil)
 	if err != nil {
 		if errors.Cause(err) == storage.ErrImageUnknown {
 			return &entities.BoolReport{Value: false}, nil

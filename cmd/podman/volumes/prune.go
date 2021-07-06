@@ -65,6 +65,7 @@ func prune(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		listOptions.Filter, err = parse.FilterArgumentsIntoFilters(filter)
+		listOptions.UntilCmdRequest = true
 		if err != nil {
 			return err
 		}

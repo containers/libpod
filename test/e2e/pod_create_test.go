@@ -559,4 +559,37 @@ ENTRYPOINT ["sleep","99999"]
 		podJSON := podInspect.InspectPodToJSON()
 		Expect(podJSON.CPUSetCPUs).To(Equal(in))
 	})
+
+	It("podman pod create --pid", func() {
+		podName := "pidPod"
+		ns := "ns:/prof/self/ns/"
+		podCreate := podmanTest.Podman([]string{"pod", "create", "--pid", ns, "--name", podName, "--share", "pid"})
+		podCreate.WaitWithDefaultTimeout()
+		Expect(podCreate.ExitCode()).To(Equal(0))
+
+		ns = "pod"
+
+		podCreate = podmanTest.Podman([]string{"pod", "create", "--pid", ns, "--share", "pid"})
+		podCreate.WaitWithDefaultTimeout()
+		Expect(podCreate.ExitCode()).To(Equal(0))
+
+		ns = "host"
+
+		podCreate = podmanTest.Podman([]string{"pod", "create", "--pid", ns, "--share", "pid"})
+		podCreate.WaitWithDefaultTimeout()
+		Expect(podCreate.ExitCode()).To(Equal(0))
+
+		ns = "private"
+
+		podCreate = podmanTest.Podman([]string{"pod", "create", "--pid", ns, "--share", "pid"})
+		podCreate.WaitWithDefaultTimeout()
+		Expect(podCreate.ExitCode()).To(Equal(0))
+
+		ns = "container:randomfakeid"
+
+		podCreate = podmanTest.Podman([]string{"pod", "create", "--pid", ns, "--share", "pid"})
+		podCreate.WaitWithDefaultTimeout()
+		Expect(podCreate).Should(ExitWithError())
+
+	})
 })

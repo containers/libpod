@@ -566,6 +566,7 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *ContainerCLIOpts, args []string
 		s.Devices = append(s.Devices, specs.LinuxDevice{Path: dev})
 	}
 
+	s.DeviceCGroupRule = c.DeviceCGroupRule
 	s.Init = c.Init
 	s.InitPath = c.InitPath
 	s.Stdin = c.Interactive

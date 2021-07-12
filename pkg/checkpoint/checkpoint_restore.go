@@ -9,6 +9,8 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v3/pkg/criu"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/errorhandling"
 	"github.com/containers/podman/v3/pkg/specgen/generate"
@@ -68,6 +70,15 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 		return nil, err
 	}
 
+	if ctrConfig.Pod != "" && restoreOptions.Pod == "" {
+		return nil, errors.Errorf("Cannot restore pod container without --pod")
+	}
+
+	if ctrConfig.Pod == "" && restoreOptions.Pod != "" {
+		// TODO: This should be fixable
+		return nil, errors.Errorf("Cannot restore non pod container into pod")
+	}
+
 	// This should not happen as checkpoints with these options are not exported.
 	if len(ctrConfig.Dependencies) > 0 {
 		return nil, errors.Errorf("Cannot import checkpoints of containers with dependencies")
@@ -94,6 +105,63 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 		ctrConfig.ID = ""
 		ctrConfig.Name = restoreOptions.Name
 		newName = true
+	}
+
+	if restoreOptions.Pod != "" {
+		// Restoring into a Pod requires much newer versions of CRIU
+		if !criu.CheckForCriu(criu.PodCriuVersion) {
+			return nil, errors.Errorf("restoring containers into pods requires at least CRIU %d", criu.PodCriuVersion)
+		}
+		// The runtime also has to support it
+		if !crutils.CRRuntimeSupportsPodCheckpointRestore(runtime.GetOCIRuntimePath()) {
+			return nil, errors.Errorf("runtime %s does not support pod restore", runtime.GetOCIRuntimePath())
+		}
+		// Restoring into an existing Pod
+		ctrConfig.Pod = restoreOptions.Pod
+
+		// According to podman pod create a pod can share the following namespaces:
+		// cgroup, ipc, net, pid, uts
+		pod, err := runtime.LookupPod(ctrConfig.Pod)
+		if err != nil {
+			return nil, errors.Wrapf(err, "pod %q cannot be retrieved", ctrConfig.Pod)
+		}
+
+		infraContainer, err := pod.InfraContainer()
+		if err != nil {
+			return nil, errors.Wrapf(err, "cannot retrieve infra container from pod %q", ctrConfig.Pod)
+		}
+
+		// If a namespaces was shared (!= "") it needs to be set to the new infrastructure container
+		if ctrConfig.IPCNsCtr != "" {
+			ctrConfig.IPCNsCtr = infraContainer.ID()
+		}
+
+		if ctrConfig.NetNsCtr != "" {
+			ctrConfig.NetNsCtr = infraContainer.ID()
+		}
+
+		if ctrConfig.PIDNsCtr != "" {
+			ctrConfig.PIDNsCtr = infraContainer.ID()
+		}
+
+		if ctrConfig.UTSNsCtr != "" {
+			ctrConfig.UTSNsCtr = infraContainer.ID()
+		}
+
+		if ctrConfig.CgroupNsCtr != "" {
+			ctrConfig.CgroupNsCtr = infraContainer.ID()
+		}
+
+		// Change SELinux labels to infrastructure container labels
+		ctrConfig.MountLabel = infraContainer.MountLabel()
+		ctrConfig.ProcessLabel = infraContainer.ProcessLabel()
+
+		// Fix parent cgroup
+		cgroupPath, err := pod.CgroupPath()
+		if err != nil {
+			return nil, errors.Wrapf(err, "cannot retrieve cgroup path from pod %q", ctrConfig.Pod)
+		}
+		ctrConfig.CgroupParent = cgroupPath
 	}
 
 	if len(restoreOptions.PublishPorts) > 0 {

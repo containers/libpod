@@ -525,6 +525,7 @@ func (ic *ContainerEngine) ContainerRestore(ctx context.Context, namesOrIds []st
 		IgnoreStaticIP:  options.IgnoreStaticIP,
 		IgnoreStaticMAC: options.IgnoreStaticMAC,
 		ImportPrevious:  options.ImportPrevious,
+		Pod:             options.Pod,
 	}
 
 	filterFuncs := []libpod.ContainerFilter{

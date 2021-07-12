@@ -887,4 +887,61 @@ function teardown() {
     basic_teardown
 }
 
+@test "podman build .dockerignore failure test " {
+    tmpdir=$PODMAN_TMPDIR/build-test
+    subdir=$tmpdir/subdir
+    mkdir -p $subdir
+
+    cat >$tmpdir/.dockerignore <<EOF
+*
+subdir
+!*/sub1*
+EOF
+    cat >$tmpdir/Containerfile <<EOF
+FROM $IMAGE
+COPY ./ ./
+COPY subdir ./
+EOF
+    run_podman 125 build -t build_test $tmpdir
+    is "$output" ".*Error: error building at STEP \"COPY subdir ./\": no items matching glob" "Expected to fail"
+}
+
+@test "podman build .containerignore and .dockerignore test " {
+    tmpdir=$PODMAN_TMPDIR/build-test
+    mkdir -p $subdir
+    touch $subdir/test1 $subdir/test2
+    cat >$tmpdir/.containerignore <<EOF
+test2*
+EOF
+    cat >$tmpdir/.dockerignore <<EOF
+test2*
+EOF
+    cat >$tmpdir/Containerfile <<EOF
+FROM $IMAGE
+COPY ./ ./test/
+RUN ls /tmp/test/
+EOF
+    run_podman build -t build_test $tmpdir
+    is "$output" ".*test2" "test2 should exists in the DockerfileExpected to fail"
+}
+
+@test "podman build .containerignore and .dockerignore test " {
+    tmpdir=$PODMAN_TMPDIR/build-test
+    mkdir -p $tmpdir
+    touch $tmpdir/test1 $tmpdir/test2
+    cat >$tmpdir/.containerignore <<EOF
+test2*
+EOF
+    cat >$tmpdir/.dockerignore <<EOF
+test1*
+EOF
+    cat >$tmpdir/Containerfile <<EOF
+FROM $IMAGE
+COPY ./ /tmp/test/
+RUN ls /tmp/test/
+EOF
+    run_podman build -t build_test $tmpdir
+    is "$output" ".*test1" "test1 should exists in the DockerfileExpected to fail"
+}
+
 # vim: filetype=sh

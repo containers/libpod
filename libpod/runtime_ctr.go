@@ -460,6 +460,25 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	} else if err := r.state.AddContainer(ctr); err != nil {
 		return nil, err
 	}
+
+	// Prepare container for volume copy-up if user opted to.
+	if r.config.Containers.PrepareOnCreate {
+		// A data volume container may not have executable file.
+		// Calling init() will result in failure due to executable file
+		// check. Instead, call prepare() to avoid the failure.
+		defer func() {
+			if retErr != nil {
+				if err := ctr.cleanup(ctx); err != nil {
+					logrus.Errorf("error cleaning up container %s: %v", ctr.ID(), err)
+				}
+			}
+		}()
+
+		if err := ctr.prepare(); err != nil {
+			return nil, err
+		}
+	}
+
 	ctr.newContainerEvent(events.Create)
 	return ctr, nil
 }

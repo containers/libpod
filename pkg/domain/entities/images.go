@@ -306,6 +306,18 @@ type ImageSaveOptions struct {
 	Quiet bool
 }
 
+// ImageScpOptions provide options for securely copying images to podman remote
+type ImageScpOptions struct {
+	// ImageName is used when loading from remote host
+	ImageName string
+	// ToFrom specifies whether we are copying to or from remote host
+	ToFrom bool
+	// Save Options used for first half of the scp operation
+	Save ImageSaveOptions
+	// Load options used for the second half of the scp operation
+	Load ImageLoadOptions
+}
+
 // ImageTreeOptions provides options for ImageEngine.Tree()
 type ImageTreeOptions struct {
 	WhatRequires bool // Show all child images and layers of the specified image

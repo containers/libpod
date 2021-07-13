@@ -120,11 +120,6 @@ func (e *encoder) marshal(tag string, in reflect.Value) {
 		e.nodev(in)
 		return
 	case Node:
-		if !in.CanAddr() {
-			var n = reflect.New(in.Type()).Elem()
-			n.Set(in)
-			in = n
-		}
 		e.nodev(in.Addr())
 		return
 	case time.Time:

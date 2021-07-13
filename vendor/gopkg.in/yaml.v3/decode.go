@@ -399,7 +399,7 @@ func (d *decoder) callObsoleteUnmarshaler(n *Node, u obsoleteUnmarshaler) (good 
 //
 // If n holds a null value, prepare returns before doing anything.
 func (d *decoder) prepare(n *Node, out reflect.Value) (newout reflect.Value, unmarshaled, good bool) {
-	if n.ShortTag() == nullTag {
+	if n.ShortTag() == nullTag || n.Kind == 0 && n.IsZero() {
 		return out, false, false
 	}
 	again := true
@@ -808,10 +808,8 @@ func (d *decoder) mapping(n *Node, out reflect.Value) (good bool) {
 		}
 	}
 
-	mapIsNew := false
 	if out.IsNil() {
 		out.Set(reflect.MakeMap(outt))
-		mapIsNew = true
 	}
 	for i := 0; i < l; i += 2 {
 		if isMerge(n.Content[i]) {
@@ -828,7 +826,7 @@ func (d *decoder) mapping(n *Node, out reflect.Value) (good bool) {
 				failf("invalid map key: %#v", k.Interface())
 			}
 			e := reflect.New(et).Elem()
-			if d.unmarshal(n.Content[i+1], e) || n.Content[i+1].ShortTag() == nullTag && (mapIsNew || !out.MapIndex(k).IsValid()) {
+			if d.unmarshal(n.Content[i+1], e) {
 				out.SetMapIndex(k, e)
 			}
 		}

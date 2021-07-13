@@ -194,11 +194,11 @@ skip_if_remote "--stdin option will not be implemented in podman-remote" \
 ###############################################################################
 # BEGIN tests which are skipped due to actual podman-remote bugs.
 
-skip_if_remote "FIXME: podman #10907 (complicated .dockerignore file)" \
-               "bud with .dockerignore"
-
-skip_if_remote "FIXME: podman #10907 (.containerignore + .dockerignore)" \
-               "bud with .containerignore"
+#skip_if_remote "FIXME: podman #10907 (complicated .dockerignore file)" \
+#               "bud with .dockerignore"
+#
+#skip_if_remote "FIXME: podman #10908 (.containerignore + .dockerignore)" \
+#               "bud with .containerignore"
 
 # Warning messages go to server, not client
 # FIXME FIXME FIXME: this is now buildah #3285, which merged 2021-06-15.

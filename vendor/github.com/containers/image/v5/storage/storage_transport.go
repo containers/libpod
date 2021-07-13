@@ -303,7 +303,7 @@ func (s storageTransport) GetStoreImage(store storage.Store, ref types.ImageRefe
 	}
 	if sref, ok := ref.(*storageReference); ok {
 		tmpRef := *sref
-		if img, err := tmpRef.resolveImage(&types.SystemContext{}); err == nil {
+		if img, err := tmpRef.resolveImage(nil); err == nil {
 			return img, nil
 		}
 	}

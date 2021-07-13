@@ -25,6 +25,7 @@ type LoginOptions struct {
 	Stdin                     io.Reader // set to os.Stdin
 	Stdout                    io.Writer // set to os.Stdout
 	AcceptUnspecifiedRegistry bool      // set to true if allows login with unspecified registry
+	AcceptRepositories        bool      // set to true to allow repositories rather than just registries
 }
 
 // LogoutOptions represents the results for flags in logout
@@ -37,6 +38,7 @@ type LogoutOptions struct {
 	// Options caller can set
 	Stdout                    io.Writer // set to os.Stdout
 	AcceptUnspecifiedRegistry bool      // set to true if allows logout with unspecified registry
+	AcceptRepositories        bool      // set to true to allow repositories rather than just registries
 }
 
 // GetLoginFlags defines and returns login flags for containers tools

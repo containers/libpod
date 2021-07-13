@@ -92,7 +92,7 @@ type bearerToken struct {
 	expirationTime time.Time
 }
 
-// dockerClient is configuration for dealing with a single Docker registry.
+// dockerClient is configuration for dealing with a single container registry.
 type dockerClient struct {
 	// The following members are set by newDockerClient and do not change afterwards.
 	sys       *types.SystemContext
@@ -213,8 +213,7 @@ func dockerCertDir(sys *types.SystemContext, hostPort string) (string, error) {
 // “write” specifies whether the client will be used for "write" access (in particular passed to lookaside.go:toplevelFromSection)
 // signatureBase is always set in the return value
 func newDockerClientFromRef(sys *types.SystemContext, ref dockerReference, write bool, actions string) (*dockerClient, error) {
-	registry := reference.Domain(ref.ref)
-	auth, err := config.GetCredentials(sys, registry)
+	auth, err := config.GetCredentialsForRef(sys, ref.ref)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error getting username and password")
 	}
@@ -224,6 +223,7 @@ func newDockerClientFromRef(sys *types.SystemContext, ref dockerReference, write
 		return nil, err
 	}
 
+	registry := reference.Domain(ref.ref)
 	client, err := newDockerClient(sys, registry, ref.ref.Name())
 	if err != nil {
 		return nil, err
@@ -343,7 +343,8 @@ func SearchRegistry(ctx context.Context, sys *types.SystemContext, registry, ima
 	v1Res := &V1Results{}
 
 	// Get credentials from authfile for the underlying hostname
-	auth, err := config.GetCredentials(sys, registry)
+	// lint:ignore SA1019 We can't use GetCredentialsForRef because we want to search the whole registry.
+	auth, err := config.GetCredentials(sys, registry) // nolint:staticcheck // https://github.com/golangci/golangci-lint/issues/741
 	if err != nil {
 		return nil, errors.Wrapf(err, "error getting username and password")
 	}
@@ -751,7 +752,7 @@ func (c *dockerClient) detectPropertiesHelper(ctx context.Context) error {
 		err = ping("http")
 	}
 	if err != nil {
-		err = errors.Wrapf(err, "error pinging docker registry %s", c.registry)
+		err = errors.Wrapf(err, "error pinging container registry %s", c.registry)
 		if c.sys != nil && c.sys.DockerDisableV1Ping {
 			return err
 		}

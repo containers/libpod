@@ -137,30 +137,29 @@ func (c *copier) determineListConversion(currentListMIMEType string, destSupport
 	if forcedListMIMEType != "" {
 		destSupportedMIMETypes = []string{forcedListMIMEType}
 	}
-	var selectedType string
-	var otherSupportedTypes []string
-	for i := range destSupportedMIMETypes {
-		// The second priority is the first member of the list of acceptable types that is a list,
-		// but keep going in case current type occurs later in the list.
-		if selectedType == "" && manifest.MIMETypeIsMultiImage(destSupportedMIMETypes[i]) {
-			selectedType = destSupportedMIMETypes[i]
-		}
-		// The first priority is the current type, if it's in the list, since that lets us avoid a
-		// conversion that isn't strictly necessary.
-		if destSupportedMIMETypes[i] == currentListMIMEType {
-			selectedType = destSupportedMIMETypes[i]
+
+	prioritizedTypes := newOrderedSet()
+	// The first priority is the current type, if it's in the list, since that lets us avoid a
+	// conversion that isn't strictly necessary.
+	for _, t := range destSupportedMIMETypes {
+		if t == currentListMIMEType {
+			prioritizedTypes.append(currentListMIMEType)
+			break
 		}
 	}
 	// Pick out the other list types that we support.
-	for i := range destSupportedMIMETypes {
-		if selectedType != destSupportedMIMETypes[i] && manifest.MIMETypeIsMultiImage(destSupportedMIMETypes[i]) {
-			otherSupportedTypes = append(otherSupportedTypes, destSupportedMIMETypes[i])
+	for _, t := range destSupportedMIMETypes {
+		if manifest.MIMETypeIsMultiImage(t) {
+			prioritizedTypes.append(t)
 		}
 	}
+
 	logrus.Debugf("Manifest list has MIME type %s, ordered candidate list [%s]", currentListMIMEType, strings.Join(destSupportedMIMETypes, ", "))
-	if selectedType == "" {
+	if len(prioritizedTypes.list) == 0 {
 		return "", nil, errors.Errorf("destination does not support any supported manifest list types (%v)", manifest.SupportedListMIMETypes)
 	}
+	selectedType := prioritizedTypes.list[0]
+	otherSupportedTypes := prioritizedTypes.list[1:]
 	if selectedType != currentListMIMEType {
 		logrus.Debugf("... will convert to %s first, and then try %v", selectedType, otherSupportedTypes)
 	} else {

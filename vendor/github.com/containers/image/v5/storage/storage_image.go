@@ -59,6 +59,7 @@ type storageImageDestination struct {
 	directory       string                   // Temporary directory where we store blobs until Commit() time
 	nextTempFileID  int32                    // A counter that we use for computing filenames to assign to blobs
 	manifest        []byte                   // Manifest contents, temporary
+	manifestDigest  digest.Digest            // Valid if len(manifest) != 0
 	signatures      []byte                   // Signature contents, temporary
 	signatureses    map[digest.Digest][]byte // Instance signature contents, temporary
 	SignatureSizes  []int                    `json:"signature-sizes,omitempty"`  // List of sizes of each signature slice
@@ -927,6 +928,13 @@ func (s *storageImageDestination) commitLayer(ctx context.Context, blob manifest
 	return nil
 }
 
+// Commit marks the process of storing the image as successful and asks for the image to be persisted.
+// unparsedToplevel contains data about the top-level manifest of the source (which may be a single-arch image or a manifest list
+// if PutManifest was only called for the single-arch image with instanceDigest == nil), primarily to allow lookups by the
+// original manifest list digest, if desired.
+// WARNING: This does not have any transactional semantics:
+// - Uploaded data MAY be visible to others before Commit() is called
+// - Uploaded data MAY be removed or MAY remain around if Close() is called without Commit() (i.e. rollback is allowed but not guaranteed)
 func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel types.UnparsedImage) error {
 	if len(s.manifest) == 0 {
 		return errors.New("Internal error: storageImageDestination.Commit() called without PutManifest()")
@@ -956,9 +964,6 @@ func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel t
 		}
 	}
 	// Find the list of layer blobs.
-	if len(s.manifest) == 0 {
-		return errors.New("Internal error: storageImageDestination.Commit() called without PutManifest()")
-	}
 	man, err := manifest.FromBlob(s.manifest, manifest.GuessMIMEType(s.manifest))
 	if err != nil {
 		return errors.Wrapf(err, "error parsing manifest")
@@ -1011,6 +1016,19 @@ func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel t
 	} else {
 		logrus.Debugf("created new image ID %q", img.ID)
 	}
+
+	// Clean up the unfinished image on any error.
+	// (Is this the right thing to do if the image has existed before?)
+	commitSucceeded := false
+	defer func() {
+		if !commitSucceeded {
+			logrus.Errorf("Updating image %q (old names %v) failed, deleting it", img.ID, oldNames)
+			if _, err := s.imageRef.transport.store.DeleteImage(img.ID, true); err != nil {
+				logrus.Errorf("Error deleting incomplete image %q: %v", img.ID, err)
+			}
+		}
+	}()
+
 	// Add the non-layer blobs as data items.  Since we only share layers, they should all be in files, so
 	// we just need to screen out the ones that are actually layers to get the list of non-layers.
 	dataBlobs := make(map[digest.Digest]struct{})
@@ -1026,24 +1044,18 @@ func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel t
 			return errors.Wrapf(err, "error copying non-layer blob %q to image", blob)
 		}
 		if err := s.imageRef.transport.store.SetImageBigData(img.ID, blob.String(), v, manifest.Digest); err != nil {
-			if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-				logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-			}
 			logrus.Debugf("error saving big data %q for image %q: %v", blob.String(), img.ID, err)
 			return errors.Wrapf(err, "error saving big data %q for image %q", blob.String(), img.ID)
 		}
 	}
-	// Save the unparsedToplevel's manifest.
-	if len(toplevelManifest) != 0 {
+	// Save the unparsedToplevel's manifest if it differs from the per-platform one, which is saved below.
+	if len(toplevelManifest) != 0 && !bytes.Equal(toplevelManifest, s.manifest) {
 		manifestDigest, err := manifest.Digest(toplevelManifest)
 		if err != nil {
 			return errors.Wrapf(err, "error digesting top-level manifest")
 		}
 		key := manifestBigDataKey(manifestDigest)
 		if err := s.imageRef.transport.store.SetImageBigData(img.ID, key, toplevelManifest, manifest.Digest); err != nil {
-			if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-				logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-			}
 			logrus.Debugf("error saving top-level manifest for image %q: %v", img.ID, err)
 			return errors.Wrapf(err, "error saving top-level manifest for image %q", img.ID)
 		}
@@ -1051,32 +1063,19 @@ func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel t
 	// Save the image's manifest.  Allow looking it up by digest by using the key convention defined by the Store.
 	// Record the manifest twice: using a digest-specific key to allow references to that specific digest instance,
 	// and using storage.ImageDigestBigDataKey for future users that don’t specify any digest and for compatibility with older readers.
-	manifestDigest, err := manifest.Digest(s.manifest)
-	if err != nil {
-		return errors.Wrapf(err, "error computing manifest digest")
-	}
-	key := manifestBigDataKey(manifestDigest)
+	key := manifestBigDataKey(s.manifestDigest)
 	if err := s.imageRef.transport.store.SetImageBigData(img.ID, key, s.manifest, manifest.Digest); err != nil {
-		if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-			logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-		}
 		logrus.Debugf("error saving manifest for image %q: %v", img.ID, err)
 		return errors.Wrapf(err, "error saving manifest for image %q", img.ID)
 	}
 	key = storage.ImageDigestBigDataKey
 	if err := s.imageRef.transport.store.SetImageBigData(img.ID, key, s.manifest, manifest.Digest); err != nil {
-		if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-			logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-		}
 		logrus.Debugf("error saving manifest for image %q: %v", img.ID, err)
 		return errors.Wrapf(err, "error saving manifest for image %q", img.ID)
 	}
 	// Save the signatures, if we have any.
 	if len(s.signatures) > 0 {
 		if err := s.imageRef.transport.store.SetImageBigData(img.ID, "signatures", s.signatures, manifest.Digest); err != nil {
-			if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-				logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-			}
 			logrus.Debugf("error saving signatures for image %q: %v", img.ID, err)
 			return errors.Wrapf(err, "error saving signatures for image %q", img.ID)
 		}
@@ -1084,9 +1083,6 @@ func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel t
 	for instanceDigest, signatures := range s.signatureses {
 		key := signatureBigDataKey(instanceDigest)
 		if err := s.imageRef.transport.store.SetImageBigData(img.ID, key, signatures, manifest.Digest); err != nil {
-			if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-				logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-			}
 			logrus.Debugf("error saving signatures for image %q: %v", img.ID, err)
 			return errors.Wrapf(err, "error saving signatures for image %q", img.ID)
 		}
@@ -1094,17 +1090,11 @@ func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel t
 	// Save our metadata.
 	metadata, err := json.Marshal(s)
 	if err != nil {
-		if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-			logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-		}
 		logrus.Debugf("error encoding metadata for image %q: %v", img.ID, err)
 		return errors.Wrapf(err, "error encoding metadata for image %q", img.ID)
 	}
 	if len(metadata) != 0 {
 		if err = s.imageRef.transport.store.SetMetadata(img.ID, string(metadata)); err != nil {
-			if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-				logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-			}
 			logrus.Debugf("error saving metadata for image %q: %v", img.ID, err)
 			return errors.Wrapf(err, "error saving metadata for image %q", img.ID)
 		}
@@ -1121,14 +1111,13 @@ func (s *storageImageDestination) Commit(ctx context.Context, unparsedToplevel t
 			names = append(names, oldNames...)
 		}
 		if err := s.imageRef.transport.store.SetNames(img.ID, names); err != nil {
-			if _, err2 := s.imageRef.transport.store.DeleteImage(img.ID, true); err2 != nil {
-				logrus.Debugf("error deleting incomplete image %q: %v", img.ID, err2)
-			}
 			logrus.Debugf("error setting names %v on image %q: %v", names, img.ID, err)
 			return errors.Wrapf(err, "error setting names %v on image %q", names, img.ID)
 		}
 		logrus.Debugf("set names of image %q to %v", img.ID, names)
 	}
+
+	commitSucceeded = true
 	return nil
 }
 
@@ -1145,9 +1134,14 @@ func (s *storageImageDestination) SupportedManifestMIMETypes() []string {
 
 // PutManifest writes the manifest to the destination.
 func (s *storageImageDestination) PutManifest(ctx context.Context, manifestBlob []byte, instanceDigest *digest.Digest) error {
+	digest, err := manifest.Digest(manifestBlob)
+	if err != nil {
+		return err
+	}
 	newBlob := make([]byte, len(manifestBlob))
 	copy(newBlob, manifestBlob)
 	s.manifest = newBlob
+	s.manifestDigest = digest
 	return nil
 }
 
@@ -1189,13 +1183,10 @@ func (s *storageImageDestination) PutSignatures(ctx context.Context, signatures 
 	if instanceDigest == nil {
 		s.signatures = sigblob
 		s.SignatureSizes = sizes
-	}
-	if instanceDigest == nil && len(s.manifest) > 0 {
-		manifestDigest, err := manifest.Digest(s.manifest)
-		if err != nil {
-			return err
+		if len(s.manifest) > 0 {
+			manifestDigest := s.manifestDigest
+			instanceDigest = &manifestDigest
 		}
-		instanceDigest = &manifestDigest
 	}
 	if instanceDigest != nil {
 		s.signatureses[*instanceDigest] = sigblob

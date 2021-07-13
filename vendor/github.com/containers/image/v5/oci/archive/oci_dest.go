@@ -129,6 +129,9 @@ func (d *ociArchiveImageDestination) PutSignatures(ctx context.Context, signatur
 }
 
 // Commit marks the process of storing the image as successful and asks for the image to be persisted
+// unparsedToplevel contains data about the top-level manifest of the source (which may be a single-arch image or a manifest list
+// if PutManifest was only called for the single-arch image with instanceDigest == nil), primarily to allow lookups by the
+// original manifest list digest, if desired.
 // after the directory is made, it is tarred up into a file and the directory is deleted
 func (d *ociArchiveImageDestination) Commit(ctx context.Context, unparsedToplevel types.UnparsedImage) error {
 	if err := d.unpackedDest.Commit(ctx, unparsedToplevel); err != nil {

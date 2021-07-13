@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/docker"
+	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/pkg/docker/config"
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/containers/image/v5/types"
@@ -69,8 +70,8 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 	systemContext = systemContextWithOptions(systemContext, opts.AuthFile, opts.CertDir)
 
 	var (
-		server string
-		err    error
+		key string
+		err error
 	)
 	if len(args) > 1 {
 		return errors.New("login accepts only one registry to login to")
@@ -79,20 +80,20 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 		if !opts.AcceptUnspecifiedRegistry {
 			return errors.New("please provide a registry to login to")
 		}
-		if server, err = defaultRegistryWhenUnspecified(systemContext); err != nil {
+		if key, err = defaultRegistryWhenUnspecified(systemContext); err != nil {
 			return err
 		}
-		logrus.Debugf("registry not specified, default to the first registry %q from registries.conf", server)
-	} else {
-		server = getRegistryName(args[0])
+		logrus.Debugf("registry not specified, default to the first registry %q from registries.conf", key)
 	}
-	authConfig, err := config.GetCredentials(systemContext, server)
+
+	authConfig, domain, err := getCredentials(systemContext, key, opts.AcceptRepositories)
 	if err != nil {
 		return errors.Wrap(err, "reading auth file")
 	}
+
 	if opts.GetLoginSet {
 		if authConfig.Username == "" {
-			return errors.Errorf("not logged into %s", server)
+			return errors.Errorf("not logged into %s", key)
 		}
 		fmt.Fprintf(opts.Stdout, "%s\n", authConfig.Username)
 		return nil
@@ -119,9 +120,9 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 
 	// If no username and no password is specified, try to use existing ones.
 	if opts.Username == "" && password == "" && authConfig.Username != "" && authConfig.Password != "" {
-		fmt.Println("Authenticating with existing credentials...")
-		if err := docker.CheckAuth(ctx, systemContext, authConfig.Username, authConfig.Password, server); err == nil {
-			fmt.Fprintln(opts.Stdout, "Existing credentials are valid. Already logged in to", server)
+		fmt.Fprintf(opts.Stdout, "Authenticating with existing credentials for %s\n", key)
+		if err := docker.CheckAuth(ctx, systemContext, authConfig.Username, authConfig.Password, domain); err == nil {
+			fmt.Fprintf(opts.Stdout, "Existing credentials are valid. Already logged in to %s\n", domain)
 			return nil
 		}
 		fmt.Fprintln(opts.Stdout, "Existing credentials are invalid, please enter valid username and password")
@@ -132,9 +133,9 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 		return errors.Wrap(err, "getting username and password")
 	}
 
-	if err = docker.CheckAuth(ctx, systemContext, username, password, server); err == nil {
+	if err = docker.CheckAuth(ctx, systemContext, username, password, domain); err == nil {
 		// Write the new credentials to the authfile
-		desc, err := config.SetCredentials(systemContext, server, username, password)
+		desc, err := config.SetCredentials(systemContext, key, username, password)
 		if err != nil {
 			return err
 		}
@@ -147,22 +148,69 @@ func Login(ctx context.Context, systemContext *types.SystemContext, opts *LoginO
 		return nil
 	}
 	if unauthorized, ok := err.(docker.ErrUnauthorizedForCredentials); ok {
-		logrus.Debugf("error logging into %q: %v", server, unauthorized)
-		return errors.Errorf("error logging into %q: invalid username/password", server)
+		logrus.Debugf("error logging into %q: %v", key, unauthorized)
+		return errors.Errorf("error logging into %q: invalid username/password", key)
 	}
-	return errors.Wrapf(err, "authenticating creds for %q", server)
+	return errors.Wrapf(err, "authenticating creds for %q", key)
 }
 
-// getRegistryName scrubs and parses the input to get the server name
-func getRegistryName(server string) string {
+// getCredentials returns the auth config for the provided key as well as its registry.
+func getCredentials(systemContext *types.SystemContext, key string, acceptRepositories bool) (auth types.DockerAuthConfig, registry string, err error) {
+	// Apply a more restrictive input validation if acceptRepositories is
+	// allowed
+	if acceptRepositories {
+		if strings.HasPrefix(key, "http://") || strings.HasPrefix(key, "https://") {
+			return auth, registry, errors.New("credentials key has https[s]:// prefix")
+		}
+
+		// TODO: check for tag and digest in key
+	}
+
+	// Automatically trim the scheme if acceptRepositories is false
+	key = trimScheme(key)
+
+	// Registry path provided, try to get the credentials for the ref.
+	if len(splitPath(key)) > 1 {
+		ref, err := reference.ParseNamed(key)
+		if err != nil {
+			return auth, registry, errors.Wrapf(err, "parse reference from %q", key)
+		}
+
+		auth, err = config.GetCredentialsForRef(systemContext, ref)
+		if err != nil {
+			return auth, registry, errors.Wrap(err, "get credentials for reference")
+		}
+
+		return auth, reference.Domain(ref), nil
+	}
+
+	// Fallback to domain based credentials if only a domain is provided.
+	// nolint: staticcheck
+	auth, err = config.GetCredentials(systemContext, key)
+	if err != nil {
+		return auth, registry, errors.Wrap(err, "get credentials")
+	}
+
+	return auth, domain(key), nil
+}
+
+// domain returns the domain for a provided repository.
+func domain(repository string) string {
+	return splitPath(repository)[0]
+}
+
+// splitPath removes the HTTP(s) scheme from the repository and splits it by using the
+// path separator "/".
+func splitPath(repository string) []string {
+	return strings.Split(repository, "/")
+}
+
+// trimScheme removes the HTTP(s) scheme from the provided repository.
+func trimScheme(repository string) string {
 	// removes 'http://' or 'https://' from the front of the
 	// server/registry string if either is there.  This will be mostly used
 	// for user input from 'Buildah login' and 'Buildah logout'.
-	server = strings.TrimPrefix(strings.TrimPrefix(server, "https://"), "http://")
-	// gets the registry from the input. If the input is of the form
-	// quay.io/myuser/myimage, it will parse it and just return quay.io
-	split := strings.Split(server, "/")
-	return split[0]
+	return strings.TrimPrefix(strings.TrimPrefix(repository, "https://"), "http://")
 }
 
 // getUserAndPass gets the username and password from STDIN if not given
@@ -209,8 +257,8 @@ func Logout(systemContext *types.SystemContext, opts *LogoutOptions, args []stri
 	systemContext = systemContextWithOptions(systemContext, opts.AuthFile, "")
 
 	var (
-		server string
-		err    error
+		key string
+		err error
 	)
 	if len(args) > 1 {
 		return errors.New("logout accepts only one registry to logout from")
@@ -219,16 +267,20 @@ func Logout(systemContext *types.SystemContext, opts *LogoutOptions, args []stri
 		if !opts.AcceptUnspecifiedRegistry {
 			return errors.New("please provide a registry to logout from")
 		}
-		if server, err = defaultRegistryWhenUnspecified(systemContext); err != nil {
+		if key, err = defaultRegistryWhenUnspecified(systemContext); err != nil {
 			return err
 		}
-		logrus.Debugf("registry not specified, default to the first registry %q from registries.conf", server)
+		logrus.Debugf("registry not specified, default to the first registry %q from registries.conf", key)
 	}
 	if len(args) != 0 {
 		if opts.All {
 			return errors.New("--all takes no arguments")
 		}
-		server = getRegistryName(args[0])
+	}
+
+	authConfig, domain, err := getCredentials(systemContext, key, opts.AcceptRepositories)
+	if err != nil {
+		return errors.Wrap(err, "reading auth file")
 	}
 
 	if opts.All {
@@ -239,24 +291,20 @@ func Logout(systemContext *types.SystemContext, opts *LogoutOptions, args []stri
 		return nil
 	}
 
-	err = config.RemoveAuthentication(systemContext, server)
+	err = config.RemoveAuthentication(systemContext, key)
 	switch errors.Cause(err) {
 	case nil:
-		fmt.Fprintf(opts.Stdout, "Removed login credentials for %s\n", server)
+		fmt.Fprintf(opts.Stdout, "Removed login credentials for %s\n", key)
 		return nil
 	case config.ErrNotLoggedIn:
-		authConfig, err := config.GetCredentials(systemContext, server)
-		if err != nil {
-			return errors.Wrap(err, "reading auth file")
-		}
-		authInvalid := docker.CheckAuth(context.Background(), systemContext, authConfig.Username, authConfig.Password, server)
+		authInvalid := docker.CheckAuth(context.Background(), systemContext, authConfig.Username, authConfig.Password, domain)
 		if authConfig.Username != "" && authConfig.Password != "" && authInvalid == nil {
-			fmt.Printf("Not logged into %s with current tool. Existing credentials were established via docker login. Please use docker logout instead.\n", server)
+			fmt.Printf("Not logged into %s with current tool. Existing credentials were established via docker login. Please use docker logout instead.\n", domain)
 			return nil
 		}
-		return errors.Errorf("Not logged into %s\n", server)
+		return errors.Errorf("Not logged into %s\n", domain)
 	default:
-		return errors.Wrapf(err, "logging out of %q", server)
+		return errors.Wrapf(err, "logging out of %q", domain)
 	}
 }
 

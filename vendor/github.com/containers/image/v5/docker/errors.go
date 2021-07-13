@@ -12,7 +12,7 @@ import (
 var (
 	// ErrV1NotSupported is returned when we're trying to talk to a
 	// docker V1 registry.
-	ErrV1NotSupported = errors.New("can't talk to a V1 docker registry")
+	ErrV1NotSupported = errors.New("can't talk to a V1 container registry")
 	// ErrTooManyRequests is returned when the status code returned is 429
 	ErrTooManyRequests = errors.New("too many requests to registry")
 )

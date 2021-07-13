@@ -49,11 +49,36 @@ func autoUpdate(cmd *cobra.Command, args []string) error {
 		// Backwards compat. System tests expect this error string.
 		return errors.Errorf("`%s` takes no arguments", cmd.CommandPath())
 	}
+
 	report, failures := registry.ContainerEngine().AutoUpdate(registry.GetContext(), autoUpdateOptions)
-	if report != nil {
-		for _, unit := range report.Units {
-			fmt.Println(unit)
+	if report == nil {
+		return errorhandling.JoinErrors(failures)
+	}
+
+	if len(report.Containers) > 0 {
+		fmt.Println("Scanned the following containers:")
+		for _, c := range report.Containers {
+			fmt.Printf(" * ID: %s, name: %s, image: %s, unit: %s, updated: %v\n", c.ID[:12], c.Name, c.Image, c.SystemdUnit, c.Updated)
 		}
 	}
+
+	if len(report.Images) > 0 {
+		fmt.Println("Scanned the following images:")
+		for _, i := range report.Images {
+			id := i.ID[:12]
+			if i.Updated {
+				id = i.NewID[:12]
+			}
+			fmt.Printf(" * ID: %s, tags: %v, updated: %v\n", id, i.Names, i.Updated)
+		}
+	}
+
+	if len(report.Units) > 0 {
+		fmt.Println("Restarted the following systemd units:")
+		for _, u := range report.Units {
+			fmt.Printf(" * %s\n", u)
+		}
+	}
+
 	return errorhandling.JoinErrors(failures)
 }

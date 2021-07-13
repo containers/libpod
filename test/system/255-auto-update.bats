@@ -123,6 +123,16 @@ function _confirm_update() {
     _wait_service_ready container-$cname.service
     run_podman auto-update
     is "$output" "Trying to pull.*" "Image is updated."
+
+    is "$output" ".*Restarted the following systemd units:
+ \* container-$cname.service.*" "Systemd unit has been restarted"
+
+    is "$output" ".*Scanned the following images:
+ \* ID: .*, tags: \[quay.io/libpod/alpine:latest\], updated: true.*" "Image has been scanned and updated"
+
+    is "$output" ".*Scanned the following containers:
+ \* ID: .*, name: .*, image: quay.io/libpod/alpine:latest, unit: container-$cname.service, updated: true.*" "Image has been scanned and updated"
+
     _confirm_update $cname $ori_image
 }
 
@@ -151,10 +161,22 @@ function _confirm_update() {
 
 @test "podman auto-update - label io.containers.autoupdate=local" {
     generate_service localtest local
-    podman commit --change CMD=/bin/bash $cname quay.io/libpod/localtest:latest
+    image=quay.io/libpod/localtest:latest
+    podman commit --change CMD=/bin/bash $cname $image
+    podman image inspect --format "{{.ID}}" $image
+    imageID="$output"
 
     _wait_service_ready container-$cname.service
     run_podman auto-update
+    is "$output" ".*Restarted the following systemd units:
+ \* container-$cname.service.*" "Systemd unit has been restarted"
+
+    is "$output" ".*Scanned the following images:
+ \* ID: .*, tags: \[$image\], updated: true.*" "Image has been scanned and updated"
+
+    is "$output" ".*Scanned the following containers:
+ \* ID: .*, name: .*, image: $image, unit: container-$cname.service, updated: true.*" "Image has been scanned and updated"
+
     _confirm_update $cname $ori_image
 }
 

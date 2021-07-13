@@ -1042,6 +1042,60 @@ func (c *Container) cniHosts() string {
 	return hosts
 }
 
+// Run networksetup hooks
+func (c *Container) runNetworkSetupHooks(ctx context.Context) error {
+	allHooks, err := c.findHooks(ctx, c.Spec(), []string{"networksetup"})
+	if allHooks == nil || err != nil {
+		return err
+	}
+
+	state, err := json.Marshal(spec.State{
+		Version:     spec.Version,
+		ID:          c.ID(),
+		Status:      "networksetup",
+		Bundle:      c.bundlePath(),
+		Annotations: c.config.Spec.Annotations,
+	})
+	if err != nil {
+		return err
+	}
+
+	netnsPath := ""
+	if c.state.NetNS != nil {
+		netnsPath = c.state.NetNS.Path()
+	}
+	if netnsPath == "" && c.state.PID > 0 {
+		netnsPath = fmt.Sprintf("/proc/%d/ns/net", c.state.PID)
+	}
+	if netnsPath == "" {
+		return fmt.Errorf("container %s: both netns path is empty and container PID is zero", c.ID())
+	}
+
+	for i, hook := range allHooks["networksetup"] {
+		hook := hook
+		logrus.Debugf("container %s: invoke networksetup hook %d, path %s", c.ID(), i, hook.Path)
+		var stderr, stdout bytes.Buffer
+		hookErr, err := c.runNetworkSetupHook(ctx, netnsPath, &hook, state, &stdout, &stderr, exec.DefaultPostKillTimeout)
+		if err != nil {
+			logrus.Warnf("container %s: networksetup hook %d: %v", c.ID(), i, err)
+			if hookErr != err {
+				logrus.Debugf("container %s: networksetup hook %d (hook error): %v", c.ID(), i, hookErr)
+			}
+			stdoutString := stdout.String()
+			if stdoutString != "" {
+				logrus.Debugf("container %s: networksetup hook %d: stdout:\n%s", c.ID(), i, stdoutString)
+			}
+			stderrString := stderr.String()
+			if stderrString != "" {
+				logrus.Debugf("container %s: networksetup hook %d: stderr:\n%s", c.ID(), i, stderrString)
+			}
+			break
+		}
+	}
+
+	return err
+}
+
 // Initialize a container, creating it in the runtime
 func (c *Container) init(ctx context.Context, retainRetries bool) error {
 	// Unconditionally remove conmon temporary files.
@@ -1109,7 +1163,11 @@ func (c *Container) init(ctx context.Context, retainRetries bool) error {
 	}
 
 	defer c.newContainerEvent(events.Init)
-	return c.completeNetworkSetup()
+	if err := c.completeNetworkSetup(); err != nil {
+		return err
+	}
+
+	return c.runNetworkSetupHooks(ctx)
 }
 
 // Clean up a container in the OCI runtime.
@@ -1979,15 +2037,15 @@ func (c *Container) saveSpec(spec *spec.Spec) error {
 	return nil
 }
 
-// Warning: precreate hooks may alter 'config' in place.
-func (c *Container) setupOCIHooks(ctx context.Context, config *spec.Spec) (map[string][]spec.Hook, error) {
+// Find hooks
+func (c *Container) findHooks(ctx context.Context, config *spec.Spec, stages []string) (map[string][]spec.Hook, error) {
 	allHooks := make(map[string][]spec.Hook)
 	if c.runtime.config.Engine.HooksDir == nil {
 		if rootless.IsRootless() {
 			return nil, nil
 		}
 		for _, hDir := range []string{hooks.DefaultDir, hooks.OverrideDir} {
-			manager, err := hooks.New(ctx, []string{hDir}, []string{"precreate", "poststop"})
+			manager, err := hooks.New(ctx, []string{hDir}, stages)
 			if err != nil {
 				if os.IsNotExist(err) {
 					continue
@@ -2006,7 +2064,7 @@ func (c *Container) setupOCIHooks(ctx context.Context, config *spec.Spec) (map[s
 			}
 		}
 	} else {
-		manager, err := hooks.New(ctx, c.runtime.config.Engine.HooksDir, []string{"precreate", "poststop"})
+		manager, err := hooks.New(ctx, c.runtime.config.Engine.HooksDir, stages)
 		if err != nil {
 			return nil, err
 		}
@@ -2015,6 +2073,16 @@ func (c *Container) setupOCIHooks(ctx context.Context, config *spec.Spec) (map[s
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	return allHooks, nil
+}
+
+// Warning: precreate hooks may alter 'config' in place.
+func (c *Container) setupOCIHooks(ctx context.Context, config *spec.Spec) (map[string][]spec.Hook, error) {
+	allHooks, err := c.findHooks(ctx, config, []string{"precreate", "networksetup", "poststop"})
+	if allHooks == nil || err != nil {
+		return nil, err
 	}
 
 	hookErr, err := exec.RuntimeConfigFilter(ctx, allHooks["precreate"], config, exec.DefaultPostKillTimeout)

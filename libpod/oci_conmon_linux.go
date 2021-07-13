@@ -1064,6 +1064,43 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		if restoreOptions.TCPEstablished {
 			args = append(args, "--runtime-opt", "--tcp-established")
 		}
+		if restoreOptions.Pod != "" {
+			// If we are restoring into an existing Pod we need to tell
+			// the runtime to change process and mount labels
+			pod, err := ctr.runtime.LookupPod(restoreOptions.Pod)
+			if err != nil {
+				return errors.Wrapf(err, "pod %q cannot be retrieved", restoreOptions.Pod)
+			}
+			infraContainer, err := pod.InfraContainer()
+			if err != nil {
+				return errors.Wrapf(err, "cannot retrieved infra container from pod %q", restoreOptions.Pod)
+			}
+			if err := infraContainer.syncContainer(); err != nil {
+				return errors.Wrapf(err, "Error syncing infrastructure container %s status", infraContainer.ID())
+			}
+			mountLabel := infraContainer.MountLabel()
+			processLabel := infraContainer.ProcessLabel()
+			if mountLabel != "" {
+				args = append(
+					args,
+					"--runtime-opt",
+					fmt.Sprintf(
+						"--lsm-mount-context=%s",
+						mountLabel,
+					),
+				)
+			}
+			if processLabel != "" {
+				args = append(
+					args,
+					"--runtime-opt",
+					fmt.Sprintf(
+						"--lsm-profile=selinux:%s",
+						processLabel,
+					),
+				)
+			}
+		}
 	}
 
 	logrus.WithFields(logrus.Fields{

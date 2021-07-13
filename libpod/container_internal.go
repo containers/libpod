@@ -437,6 +437,7 @@ func (c *Container) setupStorage(ctx context.Context) error {
 		}
 		options.Flags["ProcessLabel"] = c.config.ProcessLabel
 		options.Flags["MountLabel"] = c.config.MountLabel
+		logrus.Debugf("before create container storage c.config.MountLabel %s", c.config.MountLabel)
 	}
 	if c.config.Privileged {
 		privOpt := func(opt string) bool {

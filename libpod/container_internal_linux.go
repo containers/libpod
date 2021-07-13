@@ -1079,7 +1079,9 @@ func (c *Container) checkpoint(ctx context.Context, options ContainerCheckpointO
 	logrus.Debugf("Checkpointed container %s", c.ID())
 
 	if !options.KeepRunning && !options.PreCheckPoint {
-		c.state.State = define.ContainerStateStopped
+		if err := c.waitForExitFileAndSync(); err != nil {
+			return err
+		}
 
 		// Cleanup Storage and Network
 		if err := c.cleanup(ctx); err != nil {
@@ -1102,7 +1104,6 @@ func (c *Container) checkpoint(ctx context.Context, options ContainerCheckpointO
 		}
 	}
 
-	c.state.FinishedTime = time.Now()
 	return c.save()
 }
 
@@ -1326,6 +1327,9 @@ func (c *Container) restore(ctx context.Context, options ContainerCheckpointOpti
 	logrus.Debugf("Restored container %s", c.ID())
 
 	c.state.State = define.ContainerStateRunning
+	c.state.ExitCode = 0
+	c.state.FinishedTime = time.Time{}
+	c.state.StartedTime = time.Now()
 
 	if !options.Keep {
 		// Delete all checkpoint related files. At this point, in theory, all files

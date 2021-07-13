@@ -114,7 +114,8 @@ type VolumePruneOptions struct {
 }
 
 type VolumeListOptions struct {
-	Filter map[string][]string
+	Filter          map[string][]string
+	UntilCmdRequest bool
 }
 
 type VolumeListReport struct {

@@ -116,7 +116,7 @@ func (ic *ContainerEngine) VolumeInspect(ctx context.Context, namesOrIds []strin
 }
 
 func (ic *ContainerEngine) VolumePrune(ctx context.Context, options entities.VolumePruneOptions) ([]*reports.PruneReport, error) {
-	filterFuncs, err := filters.GenerateVolumeFilters(options.Filters)
+	filterFuncs, err := filters.GeneratePruneVolumeFilters(options.Filters)
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +131,9 @@ func (ic *ContainerEngine) pruneVolumesHelper(ctx context.Context, filterFuncs [
 	return pruned, nil
 }
 
+// VolumeList lists volumes taking into consideration provided opts
 func (ic *ContainerEngine) VolumeList(ctx context.Context, opts entities.VolumeListOptions) ([]*entities.VolumeListReport, error) {
-	volumeFilters, err := filters.GenerateVolumeFilters(opts.Filter)
+	volumeFilters, err := ic.generateVolumeListFilters(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +153,24 @@ func (ic *ContainerEngine) VolumeList(ctx context.Context, opts entities.VolumeL
 		reports = append(reports, &entities.VolumeListReport{VolumeConfigResponse: config})
 	}
 	return reports, nil
+}
+
+func (ic *ContainerEngine) generateVolumeListFilters(opts entities.VolumeListOptions) ([]libpod.VolumeFilter, error) {
+	var (
+		volumeFilters []libpod.VolumeFilter
+		err           error
+	)
+	// special internal request handler to get all until=time
+	// volumes using prune filters instead of list filters
+	if opts.UntilCmdRequest {
+		volumeFilters, err = filters.GeneratePruneVolumeFilters(opts.Filter)
+	} else {
+		volumeFilters, err = filters.GenerateVolumeFilters(opts.Filter)
+	}
+	if err != nil {
+		return []libpod.VolumeFilter{}, err
+	}
+	return volumeFilters, nil
 }
 
 // VolumeExists check if a given volume name exists

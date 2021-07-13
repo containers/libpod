@@ -2,7 +2,9 @@ package generate
 
 import (
 	"context"
+	"fmt"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/containers/common/libimage"
@@ -321,6 +323,14 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		}
 	}
 
+	for _, rule := range s.DeviceCGroupRule {
+		dev, err := parseLinuxResourcesDeviceAccess(rule)
+		if err != nil {
+			return nil, err
+		}
+		g.AddLinuxResourcesDevice(true, dev.Type, dev.Major, dev.Minor, dev.Access)
+	}
+
 	BlockAccessToKernelFilesystems(s.Privileged, s.PidNS.IsHost(), s.Mask, s.Unmask, &g)
 
 	for name, val := range s.Env {
@@ -381,4 +391,59 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 	setProcOpts(s, &g)
 
 	return configSpec, nil
+}
+
+var cgroupDeviceType = map[string]bool{
+	"a": true, // all
+	"b": true, // block device
+	"c": true, // character device
+}
+
+var cgroupDeviceAccess = map[string]bool{
+	"r": true, //read
+	"w": true, //write
+	"m": true, //mknod
+}
+
+// parseLinuxResourcesDeviceAccess parses the raw string passed with the --device-access-add flag
+func parseLinuxResourcesDeviceAccess(device string) (spec.LinuxDeviceCgroup, error) {
+	var devType, access string
+	var major, minor *int64
+
+	value := strings.Split(device, " ")
+	if len(value) != 3 {
+		return spec.LinuxDeviceCgroup{}, fmt.Errorf("invalid device cgroup rule requires type, major:Minor, and access rules: %q", device)
+	}
+
+	devType = value[0]
+	if !cgroupDeviceType[devType] {
+		return spec.LinuxDeviceCgroup{}, fmt.Errorf("invalid device type in device-access-add: %s", devType)
+	}
+
+	number := strings.SplitN(value[1], ":", 2)
+	i, err := strconv.ParseInt(number[0], 10, 64)
+	if err != nil {
+		return spec.LinuxDeviceCgroup{}, err
+	}
+	major = &i
+	if len(number) == 2 && number[1] != "*" {
+		i, err := strconv.ParseInt(number[1], 10, 64)
+		if err != nil {
+			return spec.LinuxDeviceCgroup{}, err
+		}
+		minor = &i
+	}
+	access = value[2]
+	for _, c := range strings.Split(access, "") {
+		if !cgroupDeviceAccess[c] {
+			return spec.LinuxDeviceCgroup{}, fmt.Errorf("invalid device access in device-access-add: %s", c)
+		}
+	}
+	return spec.LinuxDeviceCgroup{
+		Allow:  true,
+		Type:   devType,
+		Major:  major,
+		Minor:  minor,
+		Access: access,
+	}, nil
 }

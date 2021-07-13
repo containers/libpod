@@ -105,8 +105,6 @@ const (
 	DefaultApparmorProfile = apparmor.Profile
 	// SystemdCgroupsManager represents systemd native cgroup manager
 	SystemdCgroupsManager = "systemd"
-	// DefaultLogDriver is the default type of log files
-	DefaultLogDriver = "k8s-file"
 	// DefaultLogSizeMax is the default value for the maximum log size
 	// allowed for a container. Negative values mean that no limit is imposed.
 	DefaultLogSizeMax = -1
